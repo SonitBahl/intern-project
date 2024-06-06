@@ -3,3 +3,4 @@
 /yolov3.cfg
 /yolov3.weights
 /video
+/output_dehazed.mp4

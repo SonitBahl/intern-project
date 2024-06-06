@@ -1,7 +1,8 @@
-import numpy as np
 import cv2
+import numpy as np
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dehaze import dehaze_video, dehaze_frame
 
 
 def non_max_suppression(boxes, confidences, threshold):
@@ -80,101 +81,103 @@ def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehic
     return frame
 
 
-net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
-net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-classes = []
-with open("coco.names", "r") as f:
-    classes = f.read().splitlines()
+def main():
+    net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    classes = []
+    with open("coco.names", "r") as f:
+        classes = f.read().splitlines()
 
+    output_layers = ['yolo_82', 'yolo_94', 'yolo_106']
 
-output_layers = ['yolo_82', 'yolo_94', 'yolo_106']
+    cap = cv2.VideoCapture("video/haze_car.mp4")
 
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-cap = cv2.VideoCapture("video/people.mp4")
+    user_positions = {
+        "A": (50, frame_height - 50),
+        "B": (frame_width // 4, frame_height - 50),
+        "C": (frame_width // 2, frame_height - 50),
+        "D": (3 * frame_width // 4, frame_height - 50)
+    }
 
+    user_input = input("Enter your position (A, B, C, D): ").strip().upper()
+    if user_input in user_positions:
+        user_position = user_positions[user_input]
+    else:
+        print("Invalid position entered. Using default position A.")
+        user_position = user_positions["A"]
 
-frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-fps = int(cap.get(cv2.CAP_PROP_FPS))
+    output_path = 'output.mp4'
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
+    frame_skip = 5  
+    time_interval = 1/6
+    last_update_time = time.time()
 
-user_positions = {
-    "A": (50, frame_height - 50),
-    "B": (frame_width // 4, frame_height - 50),
-    "C": (frame_width // 2, frame_height - 50),
-    "D": (3 * frame_width // 4, frame_height - 50)
-}
+    focal_length = 615  
+    real_vehicle_widths = {
+        1: 0.5,
+        2: 2.0,
+        3: 0.7,
+        5: 2.5,
+        7: 2.5,
+    }
+    camera_height = 5
+    camera_angle = 0.0
 
+    last_processed_objects = []
+    last_processed_distances = []
 
-user_input = input("Enter your position (A, B, C, D): ").strip().upper()
-if user_input in user_positions:
-    user_position = user_positions[user_input]
-else:
-    print("Invalid position entered. Using default position A.")
-    user_position = user_positions["A"]
+    vehicle_classes = {1, 2, 3, 5, 7}  # Define the vehicle classes
 
+    dehaze_flag = int(input("Enter dehaze flag (0 for off, 1 for on): "))  # Prompt for dehaze flag
 
-output_path = 'output.mp4'
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
-
-
-frame_skip = 5  
-time_interval = 1/6
-last_update_time = time.time()
-
-focal_length = 615  
-real_vehicle_widths = {
-    1: 0.5,
-    2: 2.0,
-    3: 0.7,
-    5: 2.5,
-    7: 2.5,
-}
-camera_height = 5
-camera_angle = 0.0
-
-last_processed_objects = []
-last_processed_distances = []
-
-vehicle_classes = {1, 2, 3, 5, 7}  # Define the vehicle classes
-
-
-with ThreadPoolExecutor() as executor:
-    future_objects = None
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        frame_id = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-        
-        if frame_id % frame_skip == 0:
-            if future_objects:
-                last_processed_objects = future_objects.result()
+    with ThreadPoolExecutor() as executor:
+        future_objects = None
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
             
-            future_objects = executor.submit(detect_objects, frame, net, output_layers, classes)
-        
-        current_time = time.time()
-        
-        if current_time - last_update_time >= time_interval:
-            if future_objects:
-                last_processed_objects = future_objects.result()
+            frame_id = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
             
-            vehicles = [obj for obj in last_processed_objects if obj[4] in vehicle_classes]
-            last_processed_distances = estimate_distances(vehicles, frame.shape, focal_length, real_vehicle_widths, camera_height, camera_angle)
-            last_update_time = current_time
-        
-        frame_with_lidar = draw_lidar_on_frame(frame.copy(), last_processed_objects, last_processed_distances.copy(), user_position, classes, vehicle_classes)
-        
-        out.write(frame_with_lidar)
-        
-        cv2.imshow('Frame with LiDAR', frame_with_lidar)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            if frame_id % frame_skip == 0:
+                if future_objects:
+                    last_processed_objects = future_objects.result()
+                
+                if dehaze_flag == 1:
+                    frame = dehaze_frame(frame)  # Dehaze the frame if flag is set to 1
+
+                future_objects = executor.submit(detect_objects, frame, net, output_layers, classes)
+            
+            current_time = time.time()
+            
+            if current_time - last_update_time >= time_interval:
+                if future_objects:
+                    last_processed_objects = future_objects.result()
+                
+                vehicles = [obj for obj in last_processed_objects if obj[4] in vehicle_classes]
+                last_processed_distances = estimate_distances(vehicles, frame.shape, focal_length, real_vehicle_widths, camera_height, camera_angle)
+                last_update_time = current_time
+            
+            frame_with_lidar = draw_lidar_on_frame(frame.copy(), last_processed_objects, last_processed_distances.copy(), user_position, classes, vehicle_classes)
+            
+            out.write(frame_with_lidar)
+            
+            cv2.imshow('Frame with LiDAR', frame_with_lidar)
+            
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+    cap.release()
+    out.release()
+    cv2.destroyAllWindows()
 
 
-cap.release()
-out.release()
-cv2.destroyAllWindows()
+if __name__ == "__main__":
+    main()
+

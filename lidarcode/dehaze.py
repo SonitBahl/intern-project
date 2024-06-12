@@ -97,4 +97,4 @@ def dehaze_video(input_path, output_path):
     out.release()
     cv2.destroyAllWindows()
 
-dehaze_video("video/haze_car.mp4", "output_dehazed.mp4")
+#dehaze_video("video/haze_car.mp4", "output_dehazed.mp4")

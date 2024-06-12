@@ -35,6 +35,8 @@
     "C": [960, 1030],
     "D": [1440, 1030]
   },
-  "input_video": "D:\\PYQ\\5927704-hd_1920_1080_30fps.mp4",
-  "output_video": "output_with_lidar14.mp4"
+  "input_video": "video/hazy.mp4",
+  "output_video": "output.mp4",
+  "user_position": "A", 
+  "dehaze_flag": 1 
 }

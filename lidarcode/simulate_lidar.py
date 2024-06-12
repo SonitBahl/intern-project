@@ -1,16 +1,20 @@
 import cv2
 import numpy as np
 import time
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dehaze import dehaze_video, dehaze_frame
 
+def load_config(config_file):
+    with open(config_file, "r") as f:
+        config = json.load(f)
+    return config
 
 def non_max_suppression(boxes, confidences, threshold):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold=0.5, nms_threshold=threshold)
     return indices
 
-
-def detect_objects(frame, net, output_layers, classes):
+def detect_objects(frame, net, output_layers, classes, conf_threshold, nms_threshold):
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
     net.setInput(blob)
     outs = net.forward(output_layers)
@@ -18,7 +22,6 @@ def detect_objects(frame, net, output_layers, classes):
     boxes = []
     confidences = []
     class_ids = []
-    conf_threshold = 0.5
     for out in outs:
         for detection in out:
             scores = detection[5:]
@@ -35,7 +38,7 @@ def detect_objects(frame, net, output_layers, classes):
                 confidences.append(float(confidence))
                 class_ids.append(class_id)
     
-    indices = non_max_suppression(boxes, confidences, threshold=0.4)
+    indices = non_max_suppression(boxes, confidences, threshold=nms_threshold)
     objects = []
     if len(indices) > 0:
         for i in indices.flatten():
@@ -43,14 +46,13 @@ def detect_objects(frame, net, output_layers, classes):
             objects.append((x, y, x + w, y + h, class_ids[i]))
     return objects
 
-
 def estimate_distances(vehicles, frame_shape, focal_length, real_vehicle_widths, camera_height, camera_angle):
     distances = []
     for vehicle in vehicles:
         x1, y1, x2, y2, class_id = vehicle
         vehicle_width_in_pixels = x2 - x1
         if vehicle_width_in_pixels > 0:
-            real_width = real_vehicle_widths[class_id]
+            real_width = real_vehicle_widths[str(class_id)]  # Use string keys to match JSON keys
             distance = (real_width * focal_length) / vehicle_width_in_pixels
             
             adjusted_distance = distance * np.cos(np.radians(camera_angle)) + camera_height * np.sin(np.radians(camera_angle))
@@ -59,10 +61,7 @@ def estimate_distances(vehicles, frame_shape, focal_length, real_vehicle_widths,
             distances.append(float('inf'))
     return distances
 
-
-def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehicle_classes):
-    close_threshold = 10.0
-
+def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehicle_classes, close_threshold):
     for obj in objects:
         x1, y1, x2, y2, class_id = obj
         color = (0, 255, 0)  # Default color for non-vehicle objects
@@ -80,8 +79,10 @@ def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehic
         cv2.line(frame, user_position, (center_x, center_y), (0, 0, 255), 2)
     return frame
 
-
 def main():
+    # Load configuration
+    config = load_config("config.json")
+    
     net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     classes = []
@@ -90,27 +91,21 @@ def main():
 
     output_layers = ['yolo_82', 'yolo_94', 'yolo_106']
 
-    cap = cv2.VideoCapture("video/haze_car.mp4")
+    cap = cv2.VideoCapture(config["input_video"])
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-    user_positions = {
-        "A": (50, frame_height - 50),
-        "B": (frame_width // 4, frame_height - 50),
-        "C": (frame_width // 2, frame_height - 50),
-        "D": (3 * frame_width // 4, frame_height - 50)
-    }
+    user_positions = config["user_positions"]
 
-    user_input = input("Enter your position (A, B, C, D): ").strip().upper()
-    if user_input in user_positions:
-        user_position = user_positions[user_input]
+    if config["user_position"] in user_positions:
+        user_position = tuple(user_positions[config["user_position"]])
     else:
-        print("Invalid position entered. Using default position A.")
-        user_position = user_positions["A"]
+        print("Invalid position in config. Using default position A.")
+        user_position = tuple(user_positions["A"])
 
-    output_path = 'output.mp4'
+    output_path = config["output_video"]
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
@@ -118,23 +113,18 @@ def main():
     time_interval = 1/6
     last_update_time = time.time()
 
-    focal_length = 615  
-    real_vehicle_widths = {
-        1: 0.5,
-        2: 2.0,
-        3: 0.7,
-        5: 2.5,
-        7: 2.5,
-    }
-    camera_height = 5
-    camera_angle = 0.0
+    focal_length = config["focal_length"]
+    real_vehicle_widths = config["real_widths"]
+    camera_height = config["camera_height"]
+    camera_angle = config["camera_angle"]
 
     last_processed_objects = []
     last_processed_distances = []
 
-    vehicle_classes = {1, 2, 3, 5, 7}  # Define the vehicle classes
+    vehicle_classes = set(config["vehicle_classes"])
+    close_threshold = config["close_threshold"]
 
-    dehaze_flag = int(input("Enter dehaze flag (0 for off, 1 for on): "))  # Prompt for dehaze flag
+    dehaze_flag = config["dehaze_flag"]
 
     with ThreadPoolExecutor() as executor:
         future_objects = None
@@ -152,7 +142,7 @@ def main():
                 if dehaze_flag == 1:
                     frame = dehaze_frame(frame)  # Dehaze the frame if flag is set to 1
 
-                future_objects = executor.submit(detect_objects, frame, net, output_layers, classes)
+                future_objects = executor.submit(detect_objects, frame, net, output_layers, classes, config["threshold"], config["threshold"])
             
             current_time = time.time()
             
@@ -164,7 +154,7 @@ def main():
                 last_processed_distances = estimate_distances(vehicles, frame.shape, focal_length, real_vehicle_widths, camera_height, camera_angle)
                 last_update_time = current_time
             
-            frame_with_lidar = draw_lidar_on_frame(frame.copy(), last_processed_objects, last_processed_distances.copy(), user_position, classes, vehicle_classes)
+            frame_with_lidar = draw_lidar_on_frame(frame.copy(), last_processed_objects, last_processed_distances.copy(), user_position, classes, vehicle_classes, close_threshold)
             
             out.write(frame_with_lidar)
             
@@ -177,7 +167,5 @@ def main():
     out.release()
     cv2.destroyAllWindows()
 
-
 if __name__ == "__main__":
     main()
-

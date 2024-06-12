@@ -1,0 +1,40 @@
+{
+  "vehicle_classes": [1, 2, 3, 5, 7],
+  "animal_classes": [15, 16, 17],
+  "human_class": 0,
+  "class_labels": {
+    "0": "Person",
+    "1": "Bicycle",
+    "2": "Car",
+    "3": "Motorbike",
+    "5": "Bus",
+    "7": "Truck",
+    "15": "Cat",
+    "16": "Dog",
+    "17": "Human"
+  },
+  "real_widths": {
+    "0": 0.5,
+    "1": 0.5,
+    "2": 2.0,
+    "3": 0.7,
+    "5": 2.5,
+    "7": 2.5,
+    "15": 0.3,
+    "16": 0.5,
+    "17": 0.5
+  },
+  "focal_length": 615,
+  "camera_height": 5,
+  "camera_angle": 0.0,
+  "threshold": 0.4,
+  "close_threshold": 10.0,
+  "user_positions": {
+    "A": [50, 1030],
+    "B": [480, 1030],
+    "C": [960, 1030],
+    "D": [1440, 1030]
+  },
+  "input_video": "D:\\PYQ\\5927704-hd_1920_1080_30fps.mp4",
+  "output_video": "output_with_lidar14.mp4"
+}

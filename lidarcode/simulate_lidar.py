@@ -3,6 +3,9 @@ import numpy as np
 import time
 import json
 from concurrent.futures import ThreadPoolExecutor
+import pyttsx3
+import wave
+import pyaudio
 from dehaze import dehaze_video, dehaze_frame
 
 def load_config(config_file):
@@ -79,6 +82,30 @@ def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehic
         cv2.line(frame, user_position, (center_x, center_y), (0, 0, 255), 2)
     return frame
 
+def generate_speech(objects, distances, classes, vehicle_classes):
+    engine = pyttsx3.init()
+    speech_text = " "
+    distance_index = 0
+    
+    for obj in objects:
+        class_id = obj[4]
+        if class_id in vehicle_classes:
+            if distance_index < len(distances):
+                distance = distances[distance_index]
+                distance_index += 1
+            else:
+                distance = float('inf')
+            speech_text += f"{classes[class_id]} at {distance:.2f} meters, "
+        else:
+            speech_text += f"{classes[class_id]}, "
+    
+    return speech_text
+
+def save_speech_to_wav(speech_text, output_file="output.wav"):
+    engine = pyttsx3.init()
+    engine.save_to_file(speech_text, output_file)
+    engine.runAndWait()
+
 def main():
     # Load configuration
     config = load_config("config.json")
@@ -152,6 +179,11 @@ def main():
                 
                 vehicles = [obj for obj in last_processed_objects if obj[4] in vehicle_classes]
                 last_processed_distances = estimate_distances(vehicles, frame.shape, focal_length, real_vehicle_widths, camera_height, camera_angle)
+                
+                # Generate speech
+                speech_text = generate_speech(last_processed_objects, last_processed_distances, classes, vehicle_classes)
+                save_speech_to_wav(speech_text)
+                
                 last_update_time = current_time
             
             frame_with_lidar = draw_lidar_on_frame(frame.copy(), last_processed_objects, last_processed_distances.copy(), user_position, classes, vehicle_classes, close_threshold)

@@ -28,7 +28,7 @@
   "camera_height": 5,
   "camera_angle": 0.0,
   "threshold": 0.4,
-  "close_threshold": 10.0,
+  "close_threshold": 15.0,
   "user_positions": {
     "A": [50, 1030],
     "B": [480, 1030],

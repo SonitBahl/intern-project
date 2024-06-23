@@ -71,10 +71,11 @@ def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehic
         label = f'{classes[class_id]}'
         
         if class_id in vehicle_classes:
-            distance = distances.pop(0)
-            if distance < close_threshold:
-                color = (0, 0, 255)  # Red for close vehicles
-            label = f'{classes[class_id]}: {distance:.2f} meters'
+            if distances:
+                distance = distances.pop(0)
+                if distance < close_threshold:
+                    color = (0, 0, 255)  # Red for close vehicles
+                label = f'{classes[class_id]}: {distance:.2f} meters'
         
         center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -82,22 +83,43 @@ def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehic
         cv2.line(frame, user_position, (center_x, center_y), (0, 0, 255), 2)
     return frame
 
-def generate_speech(objects, distances, classes, vehicle_classes):
+def announce_close_vehicles(vehicles, distances, classes, close_threshold):
+    close_vehicles = [(classes[vehicle[4]], distance) for vehicle, distance in zip(vehicles, distances) if distance < close_threshold]
+    if len(close_vehicles) > 1:
+        directions = "left" if any(v[1] < close_threshold / 2 for v in close_vehicles) else "right"
+        return f"Multiple vehicles under the threshold value on your {directions}, please be careful"
+    elif len(close_vehicles) == 1:
+        return f"{close_vehicles[0][0]} at {close_vehicles[0][1]:.2f} meters"
+    return ""
+
+def generate_speech(objects, distances, classes, vehicle_classes, close_threshold):
     engine = pyttsx3.init()
     speech_text = " "
     distance_index = 0
     
-    for obj in objects:
-        class_id = obj[4]
-        if class_id in vehicle_classes:
-            if distance_index < len(distances):
-                distance = distances[distance_index]
-                distance_index += 1
+    vehicles = [obj for obj in objects if obj[4] in vehicle_classes]
+    vehicle_distances = [distances[i] for i in range(len(vehicles))]
+    
+    if len(vehicles) != len(vehicle_distances):
+        print(f"Error: Mismatch between number of vehicles ({len(vehicles)}) and distances ({len(vehicle_distances)})")
+        return ""
+
+    close_vehicles_text = announce_close_vehicles(vehicles, vehicle_distances, classes, close_threshold)
+    
+    if close_vehicles_text:
+        speech_text = close_vehicles_text
+    else:
+        for i, obj in enumerate(objects):
+            class_id = obj[4]
+            if class_id in vehicle_classes:
+                if distance_index < len(vehicle_distances):
+                    distance = vehicle_distances[distance_index]
+                    distance_index += 1
+                else:
+                    distance = float('inf')
+                speech_text += f"{classes[class_id]} at {distance:.2f} meters, "
             else:
-                distance = float('inf')
-            speech_text += f"{classes[class_id]} at {distance:.2f} meters, "
-        else:
-            speech_text += f"{classes[class_id]}, "
+                speech_text += f"{classes[class_id]}, "
     
     return speech_text
 
@@ -181,7 +203,7 @@ def main():
                 last_processed_distances = estimate_distances(vehicles, frame.shape, focal_length, real_vehicle_widths, camera_height, camera_angle)
                 
                 # Generate speech
-                speech_text = generate_speech(last_processed_objects, last_processed_distances, classes, vehicle_classes)
+                speech_text = generate_speech(last_processed_objects, last_processed_distances, classes, vehicle_classes, close_threshold)
                 save_speech_to_wav(speech_text)
                 
                 last_update_time = current_time

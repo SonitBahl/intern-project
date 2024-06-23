@@ -132,10 +132,10 @@ def main():
     # Load configuration
     config = load_config("config.json")
     
-    net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
+    net = cv2.dnn.readNet("yolofiles/yolov3.weights", "yolofiles/yolov3.cfg")
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     classes = []
-    with open("coco.names", "r") as f:
+    with open("yolofiles/coco.names", "r") as f:
         classes = f.read().splitlines()
 
     output_layers = ['yolo_82', 'yolo_94', 'yolo_106']

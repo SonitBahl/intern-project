@@ -5,24 +5,9 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 import wave
 import pyaudio
-import pyttsx3
 import asyncio
-from dehaze import dehaze_video, dehaze_frame  # Assuming dehaze functions are implemented in dehaze.py
-
-# StateMachine class to handle speech synthesis
-class StateMachine:
-    def __init__(self):
-        self.output_text = ""
-        self.engine = pyttsx3.init()
-        self.engine.setProperty('rate', 150)  # Adjust speech rate if needed
-
-    async def handle_state(self, speech_text):
-        if speech_text:
-            self.output_text += speech_text + " "
-
-    async def save_to_file(self):
-        self.engine.save_to_file(self.output_text, "output.wav")
-        self.engine.runAndWait()
+from tts import StateMachine, generate_speech, generate_all_vehicles_announcement
+from dehaze import dehaze_frame
 
 # Function to load configuration from JSON file
 def load_config(config_file):
@@ -104,43 +89,6 @@ def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehic
         cv2.line(frame, user_position, (center_x, center_y), (0, 0, 255), 2)
     return frame
 
-# Function to generate speech text based on detected vehicles
-def generate_speech(objects, distances, classes, vehicle_classes, close_threshold):
-    speech_text = ""
-    vehicles = [obj for obj in objects if obj[4] in vehicle_classes]
-    vehicle_distances = [distances[i] for i in range(len(vehicles))]
-    
-    if len(vehicles) != len(vehicle_distances):
-        print(f"Error: Mismatch between number of vehicles ({len(vehicles)}) and distances ({len(vehicle_distances)})")
-        return ""
-
-    close_vehicles = [(classes[vehicle[4]], distance) for vehicle, distance in zip(vehicles, vehicle_distances) if distance < close_threshold]
-    
-    if len(close_vehicles) > 0:
-        speech_text = "Vehicle close by. "
-    elif len(vehicles) > 1:
-        speech_text = "Multiple vehicles detected. "
-
-    return speech_text
-
-# Function to generate announcement for all detected vehicles
-def generate_all_vehicles_announcement(objects, distances, classes, vehicle_classes):
-    speech_text = "Multiple vehicles detected. "
-    vehicles = [obj for obj in objects if obj[4] in vehicle_classes]
-    vehicle_distances = [distances[i] for i in range(len(vehicles))]
-    
-    if len(vehicles) != len(vehicle_distances):
-        print(f"Error: Mismatch between number of vehicles ({len(vehicles)}) and distances ({len(vehicle_distances)})")
-        return ""
-
-    for obj in objects:
-        class_id = obj[4]
-        if class_id in vehicle_classes:
-            distance = vehicle_distances[vehicles.index(obj)]
-            speech_text += f"{classes[class_id]} ahead at {distance:.2f} meters. "
-    
-    return speech_text
-
 async def main():
     # Load configuration
     config = load_config("config.json")
@@ -190,7 +138,8 @@ async def main():
 
     dehaze_flag = config["dehaze_flag"]
 
-    state_machine = StateMachine()
+    audio_output_path = config.get("audio_output", "output/output.wav")
+    state_machine = StateMachine(audio_output_path)
 
     with ThreadPoolExecutor() as executor:
         future_objects = None
@@ -220,12 +169,12 @@ async def main():
                 last_processed_distances = estimate_distances(vehicles, frame.shape, focal_length, real_vehicle_widths, camera_height, camera_angle)
                 
                 # Generate speech
-                speech_text = generate_speech(last_processed_objects, last_processed_distances, classes, vehicle_classes, close_threshold)
+                speech_text = await generate_speech(last_processed_objects, last_processed_distances, classes, vehicle_classes, close_threshold)
                 await state_machine.handle_state(speech_text)
 
                 if current_time - last_announce_time >= announce_interval:
                     # Announce all vehicles periodically
-                    all_vehicles_text = generate_all_vehicles_announcement(last_processed_objects, last_processed_distances, classes, vehicle_classes)
+                    all_vehicles_text = await generate_all_vehicles_announcement(last_processed_objects, last_processed_distances, classes, vehicle_classes)
                     await state_machine.handle_state(all_vehicles_text)
                     last_announce_time = current_time
                 

@@ -2,43 +2,40 @@ import cv2
 import numpy as np
 import time
 import json
-import pyttsx3
 from concurrent.futures import ThreadPoolExecutor
+import wave
+import pyaudio
+import pyttsx3
 import asyncio
-import threading
+from dehaze import dehaze_video, dehaze_frame  # Assuming dehaze functions are implemented in dehaze.py
 
+# StateMachine class to handle speech synthesis
 class StateMachine:
     def __init__(self):
-        self.state = "single"
-    
-    async def handle_state(self, speech_text):
-        if "multiple" in speech_text.lower():
-            if self.state != "multiple":
-                print("Switching to multiple vehicles state...")
-                self.state = "multiple"
-        else:
-            if self.state != "single":
-                print("Switching to single vehicle state...")
-                self.state = "single"
-        
-        if self.state == "multiple":
-            # Do something specific for multiple vehicles state
-            print("Multiple vehicles state: ", speech_text)
-            await asyncio.sleep(0.5)  # Simulating async operation
-        else:
-            # Do something specific for single vehicle state
-            print("Single vehicle state: ", speech_text)
-            await asyncio.sleep(0.5)  # Simulating async operation
+        self.output_text = ""
+        self.engine = pyttsx3.init()
+        self.engine.setProperty('rate', 150)  # Adjust speech rate if needed
 
+    async def handle_state(self, speech_text):
+        if speech_text:
+            self.output_text += speech_text + " "
+
+    async def save_to_file(self):
+        self.engine.save_to_file(self.output_text, "output.wav")
+        self.engine.runAndWait()
+
+# Function to load configuration from JSON file
 def load_config(config_file):
     with open(config_file, "r") as f:
         config = json.load(f)
     return config
 
+# Function for non-maximum suppression
 def non_max_suppression(boxes, confidences, threshold):
     indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold=0.5, nms_threshold=threshold)
     return indices
 
+# Function to detect objects using YOLO
 def detect_objects(frame, net, output_layers, classes, conf_threshold, nms_threshold):
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
     net.setInput(blob)
@@ -71,6 +68,7 @@ def detect_objects(frame, net, output_layers, classes, conf_threshold, nms_thres
             objects.append((x, y, x + w, y + h, class_ids[i]))
     return objects
 
+# Function to estimate distances to detected vehicles
 def estimate_distances(vehicles, frame_shape, focal_length, real_vehicle_widths, camera_height, camera_angle):
     distances = []
     for vehicle in vehicles:
@@ -86,6 +84,7 @@ def estimate_distances(vehicles, frame_shape, focal_length, real_vehicle_widths,
             distances.append(float('inf'))
     return distances
 
+# Function to draw LiDAR information on the frame
 def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehicle_classes, close_threshold):
     for obj in objects:
         x1, y1, x2, y2, class_id = obj
@@ -105,28 +104,8 @@ def draw_lidar_on_frame(frame, objects, distances, user_position, classes, vehic
         cv2.line(frame, user_position, (center_x, center_y), (0, 0, 255), 2)
     return frame
 
+# Function to generate speech text based on detected vehicles
 def generate_speech(objects, distances, classes, vehicle_classes, close_threshold):
-    speech_text = ""
-    vehicles = [obj for obj in objects if obj[4] in vehicle_classes]
-    vehicle_distances = [distances[i] if i < len(distances) else float('inf') for i in range(len(vehicles))]
-    
-    if len(vehicles) != len(vehicle_distances):
-        print(f"Error: Mismatch between number of vehicles ({len(vehicles)}) and distances ({len(vehicle_distances)})")
-        return ""
-
-    close_vehicles = [(classes[vehicle[4]], distance) for vehicle, distance in zip(vehicles, vehicle_distances) if distance < close_threshold]
-    
-    if len(close_vehicles) > 1:
-        directions = "left" if any(v[1] < close_threshold / 2 for v in close_vehicles) else "right"
-        speech_text = f"Multiple vehicles are close together on your {directions}, please stay careful."
-    elif len(close_vehicles) == 1:
-        speech_text = f"{close_vehicles[0][0]} is close at {close_vehicles[0][1]:.2f} meters."
-    else:
-        speech_text = "Multiple vehicles ahead, stay careful."
-
-    return speech_text
-
-def generate_all_vehicles_text(objects, distances, classes, vehicle_classes, close_threshold):
     speech_text = ""
     vehicles = [obj for obj in objects if obj[4] in vehicle_classes]
     vehicle_distances = [distances[i] for i in range(len(vehicles))]
@@ -135,27 +114,32 @@ def generate_all_vehicles_text(objects, distances, classes, vehicle_classes, clo
         print(f"Error: Mismatch between number of vehicles ({len(vehicles)}) and distances ({len(vehicle_distances)})")
         return ""
 
-    close_vehicles = [(classes[vehicle[4]], distance) for vehicle, distance in zip(vehicles, vehicle_distances)]
+    close_vehicles = [(classes[vehicle[4]], distance) for vehicle, distance in zip(vehicles, vehicle_distances) if distance < close_threshold]
     
-    if len(close_vehicles) > 1:
-        directions = "left" if any(v[1] < close_threshold / 2 for v in close_vehicles) else "right"
-        speech_text = f"Multiple vehicles are close together on your {directions}, please stay careful."
-    elif len(close_vehicles) == 1:
-        speech_text = f"{close_vehicles[0][0]} is close at {close_vehicles[0][1]:.2f} meters."
-    else:
-        speech_text = "Multiple vehicles ahead, stay careful."
+    if len(close_vehicles) > 0:
+        speech_text = "Vehicle close by. "
+    elif len(vehicles) > 1:
+        speech_text = "Multiple vehicles detected. "
 
     return speech_text
 
-def save_speech_to_wav(speech_text, output_file="output/output.wav"):
-    def save_speech_threaded(text, file):
-        engine = pyttsx3.init()
-        engine.save_to_file(text, file)
-        engine.runAndWait()
+# Function to generate announcement for all detected vehicles
+def generate_all_vehicles_announcement(objects, distances, classes, vehicle_classes):
+    speech_text = "Multiple vehicles detected. "
+    vehicles = [obj for obj in objects if obj[4] in vehicle_classes]
+    vehicle_distances = [distances[i] for i in range(len(vehicles))]
+    
+    if len(vehicles) != len(vehicle_distances):
+        print(f"Error: Mismatch between number of vehicles ({len(vehicles)}) and distances ({len(vehicle_distances)})")
+        return ""
 
-    # Start a new thread to run the save_speech_threaded function
-    thread = threading.Thread(target=save_speech_threaded, args=(speech_text, output_file))
-    thread.start()
+    for obj in objects:
+        class_id = obj[4]
+        if class_id in vehicle_classes:
+            distance = vehicle_distances[vehicles.index(obj)]
+            speech_text += f"{classes[class_id]} ahead at {distance:.2f} meters. "
+    
+    return speech_text
 
 async def main():
     # Load configuration
@@ -165,7 +149,7 @@ async def main():
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     classes = []
     with open("yolofiles/coco.names", "r") as f:
-        classes = f.read().strip().split("\n")
+        classes = f.read().splitlines()
 
     output_layers = ['yolo_82', 'yolo_94', 'yolo_106']
 
@@ -190,7 +174,7 @@ async def main():
     frame_skip = 5  
     time_interval = 1/6
     last_update_time = time.time()
-    announce_interval = 5  # Announce all vehicles every 5 seconds
+    announce_interval = 5  # Interval to announce all vehicles (in seconds)
     last_announce_time = time.time() - announce_interval  # Initialize to ensure first announcement
 
     focal_length = config["focal_length"]
@@ -203,6 +187,8 @@ async def main():
 
     vehicle_classes = set(config["vehicle_classes"])
     close_threshold = config["close_threshold"]
+
+    dehaze_flag = config["dehaze_flag"]
 
     state_machine = StateMachine()
 
@@ -219,6 +205,9 @@ async def main():
                 if future_objects:
                     last_processed_objects = future_objects.result()
                 
+                if dehaze_flag == 1:
+                    frame = dehaze_frame(frame)  # Dehaze the frame if flag is set to 1
+
                 future_objects = executor.submit(detect_objects, frame, net, output_layers, classes, config["threshold"], config["threshold"])
             
             current_time = time.time()
@@ -227,18 +216,20 @@ async def main():
                 if future_objects:
                     last_processed_objects = future_objects.result()
                 
-                vehicles_text = generate_speech(last_processed_objects, last_processed_distances, classes, vehicle_classes, close_threshold)
-                await state_machine.handle_state(vehicles_text)
+                vehicles = [obj for obj in last_processed_objects if obj[4] in vehicle_classes]
+                last_processed_distances = estimate_distances(vehicles, frame.shape, focal_length, real_vehicle_widths, camera_height, camera_angle)
+                
+                # Generate speech
+                speech_text = generate_speech(last_processed_objects, last_processed_distances, classes, vehicle_classes, close_threshold)
+                await state_machine.handle_state(speech_text)
+
+                if current_time - last_announce_time >= announce_interval:
+                    # Announce all vehicles periodically
+                    all_vehicles_text = generate_all_vehicles_announcement(last_processed_objects, last_processed_distances, classes, vehicle_classes)
+                    await state_machine.handle_state(all_vehicles_text)
+                    last_announce_time = current_time
+                
                 last_update_time = current_time
-            
-            if current_time - last_announce_time >= announce_interval:
-                all_vehicles_text = generate_all_vehicles_text(last_processed_objects, last_processed_distances, classes, vehicle_classes, close_threshold)
-                await state_machine.handle_state(all_vehicles_text)
-                save_speech_to_wav(all_vehicles_text, output_file="output/output.wav")
-                last_announce_time = current_time
-            
-            vehicles = [obj for obj in last_processed_objects if obj[4] in vehicle_classes]
-            last_processed_distances = estimate_distances(vehicles, frame.shape, focal_length, real_vehicle_widths, camera_height, camera_angle)
             
             frame_with_lidar = draw_lidar_on_frame(frame.copy(), last_processed_objects, last_processed_distances.copy(), user_position, classes, vehicle_classes, close_threshold)
             
@@ -252,6 +243,9 @@ async def main():
     cap.release()
     out.release()
     cv2.destroyAllWindows()
+
+    # Save accumulated speech to output.wav
+    await state_machine.save_to_file()
 
 if __name__ == "__main__":
     asyncio.run(main())

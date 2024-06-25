@@ -35,7 +35,7 @@
     "C": [960, 1030],
     "D": [1440, 1030]
   },
-  "input_video": "video/car.mp4",
+  "input_video": "video/cars.mp4",
   "output_video": "output/output.mp4",
   "user_position": "A", 
   "dehaze_flag": 0 

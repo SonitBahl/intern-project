@@ -60,7 +60,7 @@ def estimate_distances(vehicles, frame_shape, focal_length, real_vehicle_widths,
         x1, y1, x2, y2, class_id = vehicle
         vehicle_width_in_pixels = x2 - x1
         if vehicle_width_in_pixels > 0:
-            real_width = real_vehicle_widths[str(class_id)]  # Use string keys to match JSON keys
+            real_width = real_vehicle_widths[str(class_id)] 
             distance = (real_width * focal_length) / vehicle_width_in_pixels
             
             adjusted_distance = distance * np.cos(np.radians(camera_angle)) + camera_height * np.sin(np.radians(camera_angle))
@@ -192,8 +192,6 @@ async def main():
     cap.release()
     out.release()
     cv2.destroyAllWindows()
-
-    # Save accumulated speech to output.wav
     await state_machine.save_to_file()
 
 if __name__ == "__main__":

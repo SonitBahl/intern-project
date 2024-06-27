@@ -31,6 +31,10 @@ async def generate_speech(objects, distances, classes, vehicle_classes, close_th
         speech_text = "Vehicle close by. "
     elif len(vehicles) > 1:
         speech_text = "Multiple vehicles detected. "
+    elif len(vehicles) == 1:
+        vehicle = vehicles[0]
+        distance = vehicle_distances[0]
+        speech_text = f"{classes[vehicle[4]]} ahead at {distance:.2f} meters. "
 
     return speech_text
 
@@ -49,4 +53,11 @@ async def generate_all_vehicles_announcement(objects, distances, classes, vehicl
                 distance = distances[vehicles.index(obj)]
                 speech_text += f"{classes[class_id]} ahead at {distance:.2f} meters. "
 
-    return speech_text
+    if not vehicles:
+        return ""  # No vehicles detected
+    elif len(vehicles) > 1:
+        return speech_text  # Multiple vehicles detected
+    else:
+        vehicle = vehicles[0]
+        distance = vehicle_distances[0]
+        return f"{classes[vehicle[4]]} ahead at {distance:.2f} meters. "
